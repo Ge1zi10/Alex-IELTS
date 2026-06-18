@@ -9,6 +9,63 @@ const externalVocabulary = Array.isArray(window.alexIeltsVocabularySource) ? win
 const vocabulary = externalVocabulary.length >= 600 ? externalVocabulary : localVocabulary;
 
 const TOTAL_DAYS = 30;
+const WORDS_PER_DAY = 20;
+const ADVANCED_WORDS_PER_DAY = WORDS_PER_DAY;
+
+const advancedCourseWords = new Set([
+  "retain", "knowledgeable", "interact", "informative", "beneficial", "fascinating", "guidance", "curiosity",
+  "variety", "logical", "punctuation", "relative", "passive", "proportion", "respectively", "approximately",
+  "cooperate", "specific", "strategy", "discipline", "motivation", "efficient", "flexible", "academic",
+  "performance", "assessment", "feedback", "correction", "revision", "memorise", "pronunciation", "intonation",
+  "hesitation", "narrative", "impression", "critical", "analytical", "independent", "collaborative", "communication",
+  "interaction", "participation", "engagement", "distraction", "platform", "innovation", "adolescent", "generation",
+  "cooperation", "competition", "priority", "deadline", "assignment", "presentation", "counterargument", "relevant",
+  "irrelevant", "convincing", "persuasive", "viewpoint", "perspective", "drawback", "consequence", "potential",
+  "discourage", "promote", "enhance", "strengthen", "broaden", "cultivate", "maintain", "accomplish", "evaluate",
+  "monitor", "supervise", "guideline", "boundary", "privacy", "security", "reliable", "misleading", "majority",
+  "minority", "annual", "fluctuate", "represent", "indicate", "illustrate", "summarise", "curriculum", "syllabus",
+  "complement", "agreement", "fragment", "transition", "coherence", "cohesion", "lexical", "fluency", "elaborate",
+  "justify", "clarify", "paraphrase", "proofread", "consistency", "initiative",
+]);
+
+const commonDailyWords = new Set([
+  "vocabulary", "accuracy", "structure", "complete", "subject", "verb", "object", "review", "habit", "regular",
+  "apply", "method", "focus", "progress", "clear", "education", "knowledge", "culture", "identity", "interact",
+  "adapt", "adjust", "admit", "aid", "ancient", "approve", "budget", "concentrate", "display", "feature",
+  "guarantee", "labor", "link", "motivate", "native", "objective", "pattern", "predict", "primary", "react",
+  "reject", "reveal", "significant", "vary", "visible", "account", "address", "appreciate", "aware", "bacteria",
+  "breed", "burden", "calculate", "circulate", "collaborate", "comment", "comparison", "component", "continuous",
+  "conventional", "cover", "crash", "creation", "crisis", "criticism", "delivery", "demanding", "destroy", "distract",
+  "diversity", "donate", "drug", "dynamic", "elite", "employ", "engage", "enormous", "establish", "estimate",
+  "environmental", "pollution", "habitat", "species", "climate", "urban", "rural", "transport", "population",
+  "housing", "employment", "income", "poverty", "healthcare", "exercise", "lifestyle", "technology", "media",
+  "consumer", "purchase", "economy", "tourism", "language", "creativity", "teamwork", "leadership", "responsibility",
+  "evidence", "research", "survey", "experiment", "analysis", "solution", "policy", "volunteer", "charity", "crime",
+  "punishment", "safety", "risk", "outcome", "attitude", "alternative", "awareness", "citizen", "conflict", "elderly",
+  "equality", "household", "investment", "preserve", "previous", "survive", "temporary",
+]);
+
+const advancedVocabularyIndices = vocabulary
+  .map((item, index) => ({ item, index }))
+  .filter(({ item }) => {
+    const [word, , , , , source = ""] = item;
+    if (commonDailyWords.has(word)) return false;
+    return source.includes("核心词汇") || source.includes("补充") || advancedCourseWords.has(word);
+  })
+  .map(({ index }) => index)
+  .sort((left, right) => {
+    const sourceRank = (index) => {
+      const source = vocabulary[index][5] || "";
+      if (source.includes("核心词汇")) return 0;
+      if (source.includes("补充")) return 1;
+      return 2;
+    };
+    return sourceRank(left) - sourceRank(right) || left - right;
+  });
+
+const foundationVocabularyIndices = vocabulary
+  .map((_, index) => index)
+  .filter((index) => !advancedVocabularyIndices.includes(index));
 
 const state = JSON.parse(localStorage.getItem("alexIeltsCourseState") || "{}");
 const requestedDay = Number(new URLSearchParams(window.location.search).get("day"));
@@ -133,19 +190,35 @@ function coursePositionFor(dayNumber) {
   return { day, weekIndex, dayInWeek, week, grammarPoint: week.grammar[dayInWeek - 1], phase };
 }
 
+function dailyWordIndicesFor(dayNumber) {
+  const advancedStart = ((dayNumber - 1) * ADVANCED_WORDS_PER_DAY) % advancedVocabularyIndices.length;
+  const foundationCount = WORDS_PER_DAY - ADVANCED_WORDS_PER_DAY;
+  const advanced = Array.from(
+    { length: ADVANCED_WORDS_PER_DAY },
+    (_, index) => advancedVocabularyIndices[(advancedStart + index) % advancedVocabularyIndices.length],
+  );
+  if (!foundationCount) return advanced;
+
+  const foundationStart = ((dayNumber - 1) * foundationCount) % foundationVocabularyIndices.length;
+  const foundation = Array.from(
+    { length: foundationCount },
+    (_, index) => foundationVocabularyIndices[(foundationStart + index) % foundationVocabularyIndices.length],
+  );
+
+  // Keep the mix predictable while preventing all easier checks from appearing together.
+  return [...advanced.slice(0, 8), ...foundation.slice(0, 2), ...advanced.slice(8), ...foundation.slice(2)];
+}
+
 function dailyWords() {
-  const start = ((state.day - 1) * 20) % vocabulary.length;
-  return Array.from({ length: 20 }, (_, index) => vocabulary[(start + index) % vocabulary.length]);
+  return dailyWordIndicesFor(state.day).map((index) => vocabulary[index]);
 }
 
 function dailyWordsFor(dayNumber) {
-  const start = ((dayNumber - 1) * 20) % vocabulary.length;
-  return Array.from({ length: 20 }, (_, index) => vocabulary[(start + index) % vocabulary.length]);
+  return dailyWordIndicesFor(dayNumber).map((index) => vocabulary[index]);
 }
 
 function dailyWordIndices() {
-  const start = ((state.day - 1) * 20) % vocabulary.length;
-  return Array.from({ length: 20 }, (_, index) => (start + index) % vocabulary.length);
+  return dailyWordIndicesFor(state.day);
 }
 
 function seededRank(word, salt) {

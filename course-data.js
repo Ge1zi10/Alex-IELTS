@@ -1012,8 +1012,17 @@ function renderWritingTask(prompt) {
         <li>至少使用 3 个今日词汇。</li>
       </ol>
     </div>
-    <textarea id="dailyDraft" rows="9" placeholder="Write your answer here...">${state[`draftDay${state.day}`] || ""}</textarea>
-    <button id="saveDraft" class="ghost" type="button">保存</button>
+    <textarea
+      id="${draftInputId(state.day)}"
+      data-draft-input
+      data-draft-day="${state.day}"
+      rows="9"
+      placeholder="Write your answer here..."
+    >${state[draftKey(state.day)] || ""}</textarea>
+    <div class="draft-actions">
+      <span data-draft-status="${state.day}">${draftStatusText(state.day)}</span>
+      <button id="saveDraft" class="ghost" type="button">手动保存</button>
+    </div>
   `;
 }
 
@@ -1037,8 +1046,17 @@ function renderSpeakingTask(prompt) {
         </ul>
       </div>
     </div>
-    <textarea id="dailyDraft" rows="7" placeholder="写关键词或说完后记下 3 个关键句，不用写成长作文。">${state[`draftDay${state.day}`] || ""}</textarea>
-    <button id="saveDraft" class="ghost" type="button">保存</button>
+    <textarea
+      id="${draftInputId(state.day)}"
+      data-draft-input
+      data-draft-day="${state.day}"
+      rows="7"
+      placeholder="写关键词或说完后记下 3 个关键句，不用写成长作文。"
+    >${state[draftKey(state.day)] || ""}</textarea>
+    <div class="draft-actions">
+      <span data-draft-status="${state.day}">${draftStatusText(state.day)}</span>
+      <button id="saveDraft" class="ghost" type="button">手动保存</button>
+    </div>
   `;
 }
 

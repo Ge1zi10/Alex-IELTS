@@ -10,7 +10,6 @@ const vocabulary = externalVocabulary.length >= 600 ? externalVocabulary : local
 
 const TOTAL_DAYS = 30;
 const WORDS_PER_DAY = 20;
-const ADVANCED_WORDS_PER_DAY = WORDS_PER_DAY;
 
 const advancedCourseWords = new Set([
   "retain", "knowledgeable", "interact", "informative", "beneficial", "fascinating", "guidance", "curiosity",
@@ -63,10 +62,6 @@ const advancedVocabularyIndices = vocabulary
     return sourceRank(left) - sourceRank(right) || left - right;
   });
 
-const foundationVocabularyIndices = vocabulary
-  .map((_, index) => index)
-  .filter((index) => !advancedVocabularyIndices.includes(index));
-
 const state = JSON.parse(localStorage.getItem("alexIeltsCourseState") || "{}");
 const requestedDay = Number(new URLSearchParams(window.location.search).get("day"));
 state.day ||= 1;
@@ -79,14 +74,12 @@ state.step ||= 0;
 state.completedDays ||= [];
 state.completedSteps ||= {};
 state.ratings ||= {};
-state.wordCursor ||= 0;
 state.currentCard ||= 0;
 state.streak ||= 0;
 state.quizScores ||= {};
 state.quizAnswers ||= {};
 state.vocabScores ||= {};
 state.vocabChoice ||= null;
-state.vocabMode ||= "front";
 state.vocabAttempt ||= null;
 state.vocabSession ||= null;
 state.historyDay ||= state.day;
@@ -105,6 +98,36 @@ function escapeHtml(value) {
 
 function saveState() {
   localStorage.setItem("alexIeltsCourseState", JSON.stringify(state));
+}
+
+function outputKindForDay(day = state.day) {
+  return day >= 29 || day % 2 === 0 ? "speaking" : "writing";
+}
+
+function draftKey(day = state.day) {
+  return `draftDay${day}`;
+}
+
+function draftSavedAtKey(day = state.day) {
+  return `draftSavedAtDay${day}`;
+}
+
+function draftInputId(day = state.day) {
+  return `dailyDraft-day-${day}-${outputKindForDay(day)}`;
+}
+
+function draftStatusText(day = state.day) {
+  const savedAt = state[draftSavedAtKey(day)];
+  if (!savedAt) return "自动保存已开启";
+  return `已自动保存 ${new Date(savedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function saveDraftValue(value, day = state.day) {
+  state[draftKey(day)] = value;
+  state[draftSavedAtKey(day)] = new Date().toISOString();
+  saveState();
+  const status = document.querySelector(`[data-draft-status="${day}"]`);
+  if (status) status.textContent = draftStatusText(day);
 }
 
 function backupFileName() {
@@ -191,22 +214,11 @@ function coursePositionFor(dayNumber) {
 }
 
 function dailyWordIndicesFor(dayNumber) {
-  const advancedStart = ((dayNumber - 1) * ADVANCED_WORDS_PER_DAY) % advancedVocabularyIndices.length;
-  const foundationCount = WORDS_PER_DAY - ADVANCED_WORDS_PER_DAY;
-  const advanced = Array.from(
-    { length: ADVANCED_WORDS_PER_DAY },
+  const advancedStart = ((dayNumber - 1) * WORDS_PER_DAY) % advancedVocabularyIndices.length;
+  return Array.from(
+    { length: WORDS_PER_DAY },
     (_, index) => advancedVocabularyIndices[(advancedStart + index) % advancedVocabularyIndices.length],
   );
-  if (!foundationCount) return advanced;
-
-  const foundationStart = ((dayNumber - 1) * foundationCount) % foundationVocabularyIndices.length;
-  const foundation = Array.from(
-    { length: foundationCount },
-    (_, index) => foundationVocabularyIndices[(foundationStart + index) % foundationVocabularyIndices.length],
-  );
-
-  // Keep the mix predictable while preventing all easier checks from appearing together.
-  return [...advanced.slice(0, 8), ...foundation.slice(0, 2), ...advanced.slice(8), ...foundation.slice(2)];
 }
 
 function dailyWords() {
@@ -752,15 +764,30 @@ function renderShell() {
 
 function vocabOptions(index) {
   const correct = vocabulary[index];
-  const options = [
-    { label: correct[1], value: correct[1], correct: true },
-    { label: vocabulary[(index + 7) % vocabulary.length][1], value: vocabulary[(index + 7) % vocabulary.length][1], correct: false },
-    { label: vocabulary[(index + 13) % vocabulary.length][1], value: vocabulary[(index + 13) % vocabulary.length][1], correct: false },
-    { label: "不会", value: "hard", correct: false, hard: true },
-  ];
+  const options = [{ label: correct[1], value: correct[1], correct: true }];
+  for (const offset of [7, 13, 29, 43, 59]) {
+    const meaning = vocabulary[(index + offset) % vocabulary.length][1];
+    if (meaning && meaning !== correct[1] && !options.some((option) => option.label === meaning)) {
+      options.push({ label: meaning, value: meaning, correct: false });
+    }
+    if (options.length === 3) break;
+  }
   const shift = (state.day + index) % 3;
   const firstThree = options.slice(0, 3);
-  return [...firstThree.slice(shift), ...firstThree.slice(0, shift), options[3]];
+  return [...firstThree.slice(shift), ...firstThree.slice(0, shift), { label: "不会", value: "hard", correct: false, hard: true }];
+}
+
+function syncVocabSessionToIndex(index) {
+  if (!state.vocabSession || state.vocabSession.finished) return;
+  const word = vocabulary[index]?.[0];
+  if (!word) return;
+  if (state.vocabSession.mode === "new") {
+    const newIndex = dailyWordIndices().indexOf(index);
+    if (newIndex >= 0) state.vocabSession.index = newIndex;
+    return;
+  }
+  const reviewIndex = state.vocabSession.reviewQueue.indexOf(word);
+  if (reviewIndex >= 0) state.vocabSession.index = reviewIndex;
 }
 
 function ensureVocabSession() {
@@ -834,8 +861,8 @@ function advanceVocabSession() {
 }
 
 function nextVocabLabel() {
-  ensureVocabSession();
-  if (state.vocabSession.finished) return "今日词汇完成";
+  if (!state.vocabSession) return "下一词";
+  if (state.vocabSession?.finished) return "今日词汇完成";
   if (state.vocabSession.mode === "new" && state.vocabSession.index === 19) {
     return Object.keys(state.vocabSession.errors || {}).length ? "进入错词二刷" : "完成词汇";
   }
@@ -850,6 +877,7 @@ function renderVocab(selectedWord) {
   const wordIndex = selectedWord ? vocabulary.findIndex((item) => item[0] === selectedWord) : state.currentCard;
   const safeIndex = wordIndex >= 0 ? wordIndex : 0;
   state.currentCard = safeIndex % vocabulary.length;
+  if (selectedWord) syncVocabSessionToIndex(state.currentCard);
   const [word, meaning, part, collocation, example, note] = vocabulary[state.currentCard];
   if (!state.vocabAttempt || state.vocabAttempt.word !== word || state.vocabAttempt.completed) {
     resetVocabAttempt(word);
@@ -939,7 +967,8 @@ function renderParentDashboard() {
     ...Object.keys(state.vocabScores).map(Number),
     ...Object.keys(state)
       .filter((key) => key.startsWith("draftDay"))
-      .map((key) => Number(key.replace("draftDay", ""))),
+      .map((key) => Number(key.replace("draftDay", "")))
+      .filter((day) => Number.isInteger(day)),
   ].filter((day) => Number.isInteger(day) && day >= 1);
   const maxRecordedDay = Math.min(TOTAL_DAYS, Math.max(1, ...recordedDays));
   const days = Array.from({ length: maxRecordedDay }, (_, index) => index + 1);
@@ -968,7 +997,7 @@ function renderParentDashboard() {
   $("#savedDrafts").innerHTML =
     days
       .map((day) => {
-        const draft = state[`draftDay${day}`];
+        const draft = state[draftKey(day)];
         if (!draft) return "";
         return `
           <details class="draft-item">
@@ -997,7 +1026,7 @@ function renderHistory() {
   const { week, grammarPoint, phase } = coursePositionFor(state.historyDay);
   const quiz = state.quizScores[state.historyDay];
   const vocab = state.vocabScores[state.historyDay];
-  const draft = state[`draftDay${state.historyDay}`];
+  const draft = state[draftKey(state.historyDay)];
   const words = dailyWordsFor(state.historyDay).slice(0, 20);
   const errors =
     state.vocabSession?.day === state.historyDay
@@ -1097,7 +1126,7 @@ document.addEventListener("click", (event) => {
   const copyButton = event.target.closest("[data-copy-draft]");
   if (copyButton) {
     const day = Number(copyButton.dataset.copyDraft);
-    const draft = state[`draftDay${day}`] || "";
+    const draft = state[draftKey(day)] || "";
     const label = day % 2 ? "写作" : "口语";
     copyText(`Day ${day} ${label}内容\n\n${draft}`)
       .then(() => {
@@ -1185,7 +1214,10 @@ document.addEventListener("click", (event) => {
 
   const vocabButton = event.target.closest("[data-jump-vocab]");
   if (vocabButton) {
+    state.vocabChoice = null;
+    state.vocabAttempt = null;
     renderVocab(vocabButton.dataset.jumpVocab);
+    saveState();
     $$(".tab").find((tab) => tab.dataset.view === "vocab").click();
   }
 
@@ -1206,9 +1238,12 @@ document.addEventListener("click", (event) => {
   }
 
   if (event.target.id === "saveDraft") {
-    state[`draftDay${state.day}`] = $("#dailyDraft").value.trim();
-    saveState();
+    const draftInput = document.querySelector("[data-draft-input]");
+    saveDraftValue(draftInput?.value || "", state.day);
     event.target.textContent = "已保存";
+    setTimeout(() => {
+      event.target.textContent = "手动保存";
+    }, 1200);
   }
 
   if (event.target.id === "submitQuiz") {
@@ -1234,6 +1269,15 @@ document.addEventListener("click", (event) => {
     $("#quizScoreResult").textContent = `本次得分：${correct}/${total} · ${percent}%`;
     renderParentDashboard();
   }
+});
+
+document.addEventListener("input", (event) => {
+  const draftInput = event.target.closest("[data-draft-input]");
+  if (!draftInput) return;
+  const day = Number(draftInput.dataset.draftDay) || state.day;
+  saveDraftValue(draftInput.value, day);
+  renderParentDashboard();
+  if (state.historyDay === day) renderHistory();
 });
 
 $("#checkSpelling").addEventListener("click", () => {
